@@ -1,0 +1,41 @@
+WITH ordered AS (
+    SELECT
+        sender,
+        CAST(dt AS DATETIME) AS ts,
+        amount,
+        LAG(CAST(dt AS DATETIME)) OVER (PARTITION BY sender ORDER BY CAST(dt AS DATETIME)) AS prev_ts
+    FROM transactions
+),
+grouped AS (
+    SELECT
+        sender,
+        ts,
+        amount,
+        CASE
+            WHEN prev_ts IS NULL OR TIMESTAMPDIFF(SECOND, prev_ts, ts) > 3600
+            THEN 1 ELSE 0
+        END AS new_group
+    FROM ordered
+),
+grp AS (
+    SELECT
+        sender,
+        ts,
+        amount,
+        SUM(new_group) OVER (PARTITION BY sender ORDER BY ts ROWS UNBOUNDED PRECEDING) AS grp_id
+    FROM grouped
+),
+agg AS (
+    SELECT
+        sender,
+        MIN(ts) AS sequence_start,
+        MAX(ts) AS sequence_end,
+        COUNT(*) AS transactions_count,
+        ROUND(SUM(amount), 6) AS transactions_sum
+    FROM grp
+    GROUP BY sender, grp_id
+    HAVING COUNT(*) >= 2 AND SUM(amount) >= 150
+)
+SELECT sender, sequence_start, sequence_end, transactions_count, transactions_sum
+FROM agg
+ORDER BY sender, sequence_start, sequence_end;
